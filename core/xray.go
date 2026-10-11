@@ -17,6 +17,7 @@ import (
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/features/bandwidth"
 	"github.com/xtls/xray-core/transport/internet"
 )
 
@@ -92,6 +93,8 @@ type Instance struct {
 
 // Instance state
 func (server *Instance) IsRunning() bool {
+	server.statusLock.Lock()
+	defer server.statusLock.Unlock()
 	return server.running
 }
 
@@ -187,6 +190,9 @@ func NewWithContext(ctx context.Context, config *Config) (*Instance, error) {
 }
 
 func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
+	if err := platform.ReloadEnvSettings(); err != nil {
+		return true, errors.New("failed to reload environment settings").Base(err)
+	}
 	server.ctx = context.WithValue(server.ctx, "cone",
 		platform.NewEnvFlag(platform.UseCone).GetValue(func() string { return "" }) != "true")
 
@@ -214,6 +220,7 @@ func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
 		{policy.ManagerType(), policy.DefaultManager{}},
 		{routing.RouterType(), routing.DefaultRouter{}},
 		{stats.ManagerType(), stats.NoopManager{}},
+		{bandwidth.ManagerType(), bandwidth.New()},
 	}
 
 	for _, f := range essentialFeatures {
@@ -317,7 +324,7 @@ func (s *Instance) RequireFeatures(callback interface{}, optional bool) error {
 
 // AddFeature registers a feature into current Instance.
 func (s *Instance) AddFeature(feature features.Feature) error {
-	if s.running {
+	if s.IsRunning() {
 		if err := feature.Start(); err != nil {
 			errors.LogInfoInner(s.ctx, err, "failed to start feature")
 		}
